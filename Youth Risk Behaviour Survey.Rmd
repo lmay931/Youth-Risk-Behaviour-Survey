@@ -1,0 +1,247 @@
+---
+title: "Youth Risk Behaviour Survey"
+author: "Lawrence May"
+date: "14/10/2020"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Youth Risk Behaviour Survey
+
+1.) Build a classifier to predict labels r from x with xgboost, and show the confusion matrix
+
+(You will need to specify the objective function for multi-class prediction, and you will need to remove observations with missing label)
+```{r}
+library(xgboost)
+load('/Users/lawrence/Google Drive/misc/UNI/Stats 369/a4/yrbs.rda')
+
+x <- x[-c(which(is.na(r))),]  #remove values that are labeled NA
+r<- r[!is.na(r)]
+
+test<-sample(nrow(x),0.1*nrow(x))
+test_r<-r[test]
+
+train_r<-r[-test]
+train_x<-sapply(x[-test,],as.numeric)   #Turn all the predictors to numeric form
+test_x<-sapply(x[test,],as.numeric)
+
+
+bst <- xgb.cv(data = train_x, label = train_r, max_depth = 2, eta = 1, nthread=2,nrounds = 50,nfold=10, num_class = 8,objective = "multi:softmax",lambda=1)
+```
+
+It appears that after about 23 rounds there is not much improvement in the test-merror (around 0.45). This should therefore be a good fit and I will refit the model using 23 rounds. Regularisation does not seem to add much benefit here in reducing test-merror, I will therefore exclude it in the final model.
+
+```{r}
+bst.final<-xgboost(data = train_x, label = train_r, max_depth = 2, eta = 1, nrounds = 23, num_class = 8,objective = "multi:softmax")
+```
+
+The classifier does slightly better than random guessing (~59% accuracy) but not a great job at classifying the ethnicity of the children.
+
+```{r}
+table(predict(bst.final,newdata=test_x)==test_r)
+```
+```{r}
+table(predict(bst.final,newdata=test_x)==test_r)[2]/length(test_r)
+```
+
+The tree correctly classifies about 56% of the observations in the test set, slightly better than random guessing but not particularly great.
+
+```{r}
+unique(predict(bst.final,newdata=test_x))
+```
+
+The model only predicts classes 1,2,4,5,6 and 7. Classes 0 and 3 do not get predicted by the model. These are Native Americans/ Alaskan natives and Native Hawaiians/Other pacific islanders. This is possibly due to their relative small number of observations compared to the other races:
+
+```{r}
+"Num. observations:"
+cat(" American Indian/Alaskan Native:",length(train_r[train_r==0]))
+cat(" Asian: ",length(train_r[train_r==1]))
+cat(" Black/African American: ",length(train_r[train_r==2]))
+cat(" Native Hawaiian or other Pacific Islander: ",length(train_r[train_r==3]))
+cat(" White: ",length(train_r[train_r==4]))
+cat(" Hispanic/Latino: ",length(train_r[train_r==5]))
+cat(" multiple race and Hispanic/Latino: ",length(train_r[train_r==6]))
+cat(" multiple-race but not Hispanic/Latino: ",length(train_r[train_r==7]))
+```
+
+There are a lot fewer observations for both American Indians and native Hawaiians, therefore they are less likely to be the correct category in the training set. The tree likely picks up on this and classifies them as a class that has more observations. One way to fix this might be to look into prior and posterior probabilities and incorporate these into the model (as was done in the rpart tree lab with the autism data). Alternatively, for the next data collection more attention could be put on ensuring that each race is reasonably similarly represented in the data set.
+
+```{r}
+table(predict(bst.final,newdata=test_x),test_r)
+```
+
+
+2.) Describe and visualise which variables are most important in the prediction.
+```{r}
+imp<-xgb.importance(model=bst.final)
+xgb.plot.importance(importance_matrix = imp, top_n = 20, measure = 'Gain')
+```
+
+```{r}
+imp[1:10,]
+```
+
+By far the  most important two variables for prediction are q97 and q9, with a gain of 0.225 and 0.213. These are Q9: How often do you wear a seat belt when riding in a car driven by someone else? and q97:During the past 12 months, how many times have you had a sunburn? 
+Followed they are by q99 (How well do you speak English?) with a 0.053 gain and q13 (During the past 30 days, on how many days did you carry a weapon such as a gun, knife, or club?) with a 0.04 gain.
+After this, the variables level off a bit in importance, with perhaps q89 (During the past 12 months, how would you describe your grades in school?) being the last important (Gain = 0.021) before we see an elbow-like drop off in importance.
+
+```{r}
+xgb.plot.tree(model=bst.final,trees = 0:3)
+```
+
+This can be confirmed by the tree graph. While q97 (How often did you get sunburned) makes sense in predicting race, as perhaps native American or African American people are less likely to get sunburnt due to their skin composition, q9(How often do you wear a seatbelt) seems a little less relevant. This likely would reflect different attitudes among races towards seat belts.
+
+3.) Task 3: Describe and display the relationships between the most important variables and the label categories – which category/categories is each of the most important variables useful for predicting? Can you produce a summary of the most distinctive predictors for each label category?
+
+```{r}
+train_binary_r_matrix<-matrix(nrow=length(train_r),ncol=8)
+test_binary_r_matrix<-matrix(nrow=length(test_r),ncol=8)
+#Each column represents the binaryised labels vector, where it equals 1 if the observation was the class that each column represents, and zero otherwise
+for(i in c(1:8)){
+  train_binary_r_matrix[,i]<-ifelse(train_r==i-1,1,0)
+}
+
+for(i in c(1:8)){
+  test_binary_r_matrix[,i]<-ifelse(test_r==i-1,1,0)
+}
+
+
+#After doing cross-validation, 5 rounds seem to be sufficient
+r_0<-xgboost(data = train_x, label = train_binary_r_matrix[,1], max_depth = 2, eta = 1, nrounds = 5)
+
+
+r_1<-xgboost(data = train_x, label = train_binary_r_matrix[,2], max_depth = 2, eta = 1, nrounds = 5)
+
+r_2<-xgboost(data = train_x, label = train_binary_r_matrix[,3], max_depth = 2, eta = 1, nrounds = 5)
+
+r_3<-xgboost(data = train_x, label = train_binary_r_matrix[,4], max_depth = 2, eta = 1, nrounds = 5)
+
+r_4<-xgboost(data = train_x, label = train_binary_r_matrix[,5], max_depth = 2, eta = 1, nrounds = 5)
+
+r_5<-xgboost(data = train_x, label = train_binary_r_matrix[,6], max_depth = 2, eta = 1, nrounds = 5)
+
+r_6<-xgboost(data = train_x, label = train_binary_r_matrix[,7], max_depth = 2, eta = 1, nrounds = 5)
+
+r_7<-xgboost(data = train_x, label = train_binary_r_matrix[,8], max_depth = 2, eta = 1, nrounds = 5)
+```
+
+##Level 0: American Indian/Alaskan Native:
+```{r}
+imp<-xgb.importance(model=r_0)
+xgb.plot.importance(importance_matrix = imp, top_n = 10, measure = 'Gain')
+```
+
+The most important variable for the classification of American Indians/ Alaskan Natives were Q62. During your life, with how many people have you had sexual intercourse?; Q95. During the past 7 days, on how many days did you do exercises to strengthen or tone your muscles, such as push-ups, sit-ups, or weight lifting? and
+Q66. The last time you had sexual intercourse, what one method did you or your partner use to prevent pregnancy?
+
+```{r}
+xgb.plot.tree(model=r_0,trees = 0:2)
+```
+
+```{r}
+xgb.plot.tree(model=r_0,trees = 3:4)
+```
+If the person had less than 5.5 sexual partners in their live, they are a lot more likely to be Native American.
+
+##1=Asian
+```{r}
+imp<-xgb.importance(model=r_1)
+xgb.plot.importance(importance_matrix = imp, top_n = 10, measure = 'Gain')
+```
+Q28:During the past 12 months, did you make a plan about how you would attempt suicide? seems to be by far the most important predictor of a student being Asian, followed by Q95. During the past 7 days, on how many days did you do exercises to strengthen or tone your muscles, such as push-ups, sit-ups, or weight lifting? 
+
+```{r}
+xgb.plot.tree(model=r_1,trees = 0:1)
+```
+
+
+2=Black/African American
+```{r}
+imp<-xgb.importance(model=r_2)
+xgb.plot.importance(importance_matrix = imp, top_n = 10, measure = 'Gain')
+```
+Q13. During the past 30 days, on how many days did you carry a weapon such as a gun, knife, or club? and Q97. During the past 12 months, how many times have you had a sunburn? were most significant in classifying a child to be black.
+
+```{r}
+xgb.plot.tree(model=r_2,trees = 0:1)
+```
+
+If the child had a sunburn less than 1.5 times in the last 30 days, the algorithm would be less likely to classify the child as African American. This might make sense as potentially people with coloured skin are more resistant to sunburns than people with lighter skin.
+
+3=Native Hawaiian or other Pacific Islander
+```{r}
+imp<-xgb.importance(model=r_3)
+xgb.plot.importance(importance_matrix = imp, top_n = 10, measure = 'Gain')
+```
+```{r}
+xgb.plot.tree(model=r_3,trees = 0:1)
+```
+
+Q90. During the past 30 days, how did you usually use marijuana? and Q8. When you rode a bicycle during the past 12 months, how often did you wear a helmet? were the most predictors for the category Pacific islander.
+
+4=White
+```{r}
+imp<-xgb.importance(model=r_4)
+xgb.plot.importance(importance_matrix = imp, top_n = 10, measure = 'Gain')
+```
+Q9. How often do you wear a seat belt when riding in a car driven by someone else? and Q97. During the past 12 months, how many times have you had a sunburn? were the most important predictors for a person being white.
+
+```{r}
+xgb.plot.tree(model=r_4,trees = 0:1)
+```
+
+The tree identifies people being white by them always wearing seatbelts and being more prone to sunburn and being able to speak english well or very well (q99).
+
+5=Hispanic/Latino
+```{r}
+imp<-xgb.importance(model=r_5)
+xgb.plot.importance(importance_matrix = imp, top_n = 10, measure = 'Gain')
+```
+
+Q99. How well do you speak English? and Q8. When you rode a bicycle during the past 12 months, how often did you wear a helmet? and Q97. During the past 12 months, how many times have you had a sunburn? were most important in predicting a person to be latino.
+
+```{r}
+xgb.plot.tree(model=r_5,trees = 0:1)
+```
+
+The most important variable for the tree to identify latinos is if they don't speak English well or very well - sensible as in many cases Spanish might be their first language.
+
+
+6=multiple race and Hispanic/Latino
+```{r}
+imp<-xgb.importance(model=r_6)
+xgb.plot.importance(importance_matrix = imp, top_n = 10, measure = 'Gain')
+```
+Likewise Q8. When you rode a bicycle during the past 12 months, how often did you wear a helmet? and Q97. During the past 12 months, how many times have you had a sunburn? were most important to predict category 6.
+
+7=multiple-race but not Hispanic/Latino
+```{r}
+imp<-xgb.importance(model=r_7)
+xgb.plot.importance(importance_matrix = imp, top_n = 10, measure = 'Gain')
+```
+Q6 (How tall are you without shoes on) was the most important predictor for category 7, followed by qQ88. On an average school night, how many hours of sleep do you get? and Q80During the past 7 days, on how many days were you physically active for a total of at least 60 minutes per day?
+
+
+##Overall summary of relationship between most important variables and label categories
+
+By far the most important variable the tree uses for prediction is q97 During the past 12 months, how many times have you had a sunburn?. This variable seems to be of particular importance in classifying the label category 4 (white), 2(black ) and 6 (multiple race and Latino). This seems logical as darker skinned people would likely be less prone to getting sunburnt.
+
+
+The second most important overall variable is q9 How often do you wear a seat belt when riding in a car driven by someone else? which the tree uses heavily to classify label category 4 (white) and to a lesser extend category 2 (black). This might reflect different cultural attitudes towards the wearing of seat belts among different ethnicities.
+
+The third most important overall variable is q99 How well do you speak English? which the tree relied on heavily to classify label category 5 (Hispanic/Latino). This likely reflects Spanish instead of English being the first language for many Latino children.
+
+
+
+
+
+
+4.) Task 4: Comment on whether (or not) task 3 would be ethically problematic if intended to be published, and for what reasons.
+
+Task 3 would be ethically problematic to publish as it can lead to discrimination. For example, the most important variable for identifying black children is Q13:"During the past 30 days, on how many days did you carry a weapon such as a gun, knife, or club?" which directly feeds into many negative stereotypes surrounding African Americans. Likewise, Q90. "During the past 30 days, how did you usually use marijuana?" was the most important variable for identifying native Hawaiians.
+
+This can lead to and reinforce all kinds of problems, from social stigma to being denied housing, jobs or other opportunities.
+Another reason it could be problematic is that it could lead to certain vulnerable groups to be taken advantage of. For example, if our findings indicate that a certain ethnic group is more likely to consume junk food and soft drinks, this could lead to junk food and soft drink companies specifically targeting this ethnic group, taking advantage of their tendency to consume these unhealthy foods and thereby only amplifying the problem.
+Another reason is that if a variable such as drug or alcohol abuse turns out to be a good predictor for a certain ethnicity category, this could lead to discrimination (possibly unintended) if this classifier is used for things such as job applications or mortgages.
